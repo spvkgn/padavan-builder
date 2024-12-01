@@ -20,6 +20,10 @@ jobs:
     runs-on: ubuntu-latest
     container: registry.gitlab.com/hadzhioglu/padavan-ng
     defaults: { run: { shell: bash } }
+    outputs:
+      vendor: ${{ steps.prepare.outputs.vendor }}
+      product_id: ${{ steps.prepare.outputs.product_id }}
+      fw_file: ${{ steps.prepare.outputs.fw_file }}
     steps:
     - uses: actions/checkout@v4
 
@@ -67,12 +71,18 @@ jobs:
       run: '[[ -f post-build.sh ]] && . post-build.sh || :'
 
     - name: Prepare artifacts
+      id: prepare
       run: |
         FW_FILE_NAME="$(find padavan-ng/trunk/images -type f -regextype posix-extended -iregex ".*\.(trx|bin)$" \
                         -printf "%T@\t%f\n" | sort -V | tail -1 | cut -f2)"
         cp "padavan-ng/trunk/images/$FW_FILE_NAME" .
         echo "FW_FILE_NAME=$FW_FILE_NAME" >> $GITHUB_ENV
         echo "BUILD_TIMESTAMP=$(date '+%Y%m%d.%H%M%S')" >> $GITHUB_ENV
+        {
+          echo "vendor=$CONFIG_VENDOR"
+          echo "product_id=$CONFIG_FIRMWARE_PRODUCT_ID"
+          echo "fw_file=$FW_FILE_NAME"
+        } >> $GITHUB_OUTPUT
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
@@ -96,25 +106,34 @@ jobs:
           exit 1
         fi
 
+  release:
+    # if: inputs.release_upload == 'yes'
+    needs: build
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+    - name: Download artifacts
+      uses: actions/download-artifact@v4
+
     - name: Prepare for release upload
-      # if: inputs.release_upload == 'yes'
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        RELEASE_TARGZ=$(basename ${{ env.FW_FILE_NAME }} .trx).tar.gz
-        tar -czf $RELEASE_TARGZ ${{ env.FW_FILE_NAME }} build.config build_firmware.log
-        gh release delete ${{ env.CONFIG_VENDOR }}_${{ env.CONFIG_FIRMWARE_PRODUCT_ID }} --cleanup-tag -y -R ${{ github.repository }} || true
-        echo "RELEASE_TARGZ=$RELEASE_TARGZ" >> $GITHUB_ENV
+        cd padavan-ng*
+        RELEASE_ZIP=$(basename ${{ needs.build.outputs.fw_file }} .trx).zip
+        zip $GITHUB_WORKSPACE/$RELEASE_ZIP ${{ needs.build.outputs.fw_file }} build.config build_firmware.log
+        gh release delete ${{ needs.build.outputs.vendor }}_${{ needs.build.outputs.product_id }} --cleanup-tag -y -R ${{ github.repository }} || true
+        echo "RELEASE_ZIP=$RELEASE_ZIP" >> $GITHUB_ENV
 
     - name: Upload release
-      # if: inputs.release_upload == 'yes'
       uses: softprops/action-gh-release@v2
       with:
         fail_on_unmatched_files: true
         prerelease: false
         draft: false
-        tag_name: ${{ env.CONFIG_VENDOR }}_${{ env.CONFIG_FIRMWARE_PRODUCT_ID }}
-        name: ${{ env.CONFIG_VENDOR }}_${{ env.CONFIG_FIRMWARE_PRODUCT_ID }}
+        tag_name: ${{ needs.build.outputs.product_id }}
+        name: ${{ format('{0} {1}', needs.build.outputs.vendor, needs.build.outputs.product_id) }}
         body: |
-          ### ${{ env.CONFIG_VENDOR }}_${{ env.CONFIG_FIRMWARE_PRODUCT_ID }}
-        files: ${{ env.RELEASE_TARGZ }}
+          ### ${{ format('{0} {1}', needs.build.outputs.vendor, needs.build.outputs.product_id) }}
+        files: ${{ env.RELEASE_ZIP }}
