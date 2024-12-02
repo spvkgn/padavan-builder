@@ -29,7 +29,14 @@ jobs:
         VENDOR=$(grep -Po '^CONFIG_VENDOR=\K.+' build.config)
         PRODUCT_ID=$(ls *.trx | cut -d_ -f1)
         RELEASE_ZIP=$(basename *.trx .trx).zip
-        zip $GITHUB_WORKSPACE/$RELEASE_ZIP *.trx build.config build_firmware.log
+        # Create body with checksum
+        printf "| %s | %s |\n" Filename sha256sum --- --- > $GITHUB_WORKSPACE/body.txt
+        for i in *.trx ; do
+          printf "| %s | %s |\n" "$i" $(sha256sum $i | tee -a sha256sums.txt | awk '{ print $1 }') >> $GITHUB_WORKSPACE/body.txt
+        done
+        # Create release zip
+        zip $GITHUB_WORKSPACE/$RELEASE_ZIP *.trx build.config build_firmware.log sha256sums.txt
+        # Delete existing release
         gh release delete $(ls *.trx | cut -d_ -f1) --cleanup-tag -y -R ${{ github.repository }} || true
         # gh run list -w ${{ github.workflow }} -R ${{ github.repository }} | awk -F '\t' '{ print $7 }' | while read id; do gh run delete -R ${{ github.repository }} $id; done
         {
@@ -46,6 +53,5 @@ jobs:
         draft: false
         tag_name: ${{ env.PRODUCT_ID }}
         name: ${{ format('{0} {1}', env.VENDOR, env.PRODUCT_ID) }}
-        body: |
-          ### ${{ format('{0} {1}', env.VENDOR, env.PRODUCT_ID) }}
+        body_path: body.txt
         files: ${{ env.RELEASE_ZIP }}
