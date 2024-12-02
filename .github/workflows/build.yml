@@ -2,21 +2,24 @@ name: Build firmware
 
 on:
   workflow_dispatch:
-    # inputs:
-    #   release_upload:
-    #     description: 'Upload release?'
-    #     required: true
-    #     default: 'no'
-    #     type: choice
-    #     options:
-    #     - yes
-    #     - no
-  push:
-    tags:
-      - '*'
 
 jobs:
+  pre:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.targets.outputs.matrix }}
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Get targets
+      id: targets
+      run: |
+        cd targets
+        echo "matrix=$(ls | jq -cnR '[inputs | select(length>0)]')" >> $GITHUB_OUTPUT
+
   build:
+    name: 'build :: ${{ matrix.product_id }}'
+    needs: pre
     runs-on: ubuntu-latest
     container: registry.gitlab.com/hadzhioglu/padavan-ng
     defaults: { run: { shell: bash } }
@@ -24,11 +27,15 @@ jobs:
       vendor: ${{ steps.prepare.outputs.vendor }}
       product_id: ${{ steps.prepare.outputs.product_id }}
       fw_file: ${{ steps.prepare.outputs.fw_file }}
+    strategy:
+      matrix:
+        product_id: ${{ fromJson(needs.pre.outputs.matrix) }}
     steps:
     - uses: actions/checkout@v4
 
     - name: Get variables
       run: |
+        cp targets/${{ matrix.product_id }}/build.config .
         sed -i 's|\r$||g' variables build.config
         . <(cat variables build.config)
         PADAVAN_THEMES="${PADAVAN_THEMES[*]}"
@@ -41,7 +48,9 @@ jobs:
         git config --global --add safe.directory '*'
         git clone -b "$PADAVAN_BRANCH" "$PADAVAN_REPO"
         git -C padavan-ng checkout "$PADAVAN_COMMIT"
-        git -C padavan-ng apply -v $GITHUB_WORKSPACE/patches/*.patch
+        if [[ -d targets/${{ matrix.product_id }}/patches ]]; then
+          git -C padavan-ng apply -v $GITHUB_WORKSPACE/targets/${{ matrix.product_id }}/patches/*.patch
+        fi
         wget -qO- "$PADAVAN_TOOLCHAIN_URL" | tar -C padavan-ng --zstd -xf -
 
     - name: Install themes
@@ -107,7 +116,6 @@ jobs:
         fi
 
   release:
-    # if: inputs.release_upload == 'yes'
     needs: build
     permissions:
       contents: write
@@ -122,6 +130,7 @@ jobs:
       run: |
         cd padavan-ng*
         RELEASE_ZIP=$(basename ${{ needs.build.outputs.fw_file }} .trx).zip
+        echo "RELEASE_ZIP=$RELEASE_ZIP" >> $GITHUB_ENV
         # Create body with checksum
         printf "| %s | %s |\n" Filename sha256sum --- --- > $GITHUB_WORKSPACE/body.txt
         for i in *.trx ; do
@@ -130,8 +139,7 @@ jobs:
         # Create release zip
         zip $GITHUB_WORKSPACE/$RELEASE_ZIP ${{ needs.build.outputs.fw_file }} build.config build_firmware.log sha256sums.txt
         # Delete existing release
-        gh release delete ${{ needs.build.outputs.vendor }}_${{ needs.build.outputs.product_id }} --cleanup-tag -y -R ${{ github.repository }} || true
-        echo "RELEASE_ZIP=$RELEASE_ZIP" >> $GITHUB_ENV
+        gh release delete ${{ needs.build.outputs.product_id }} --cleanup-tag -y -R ${{ github.repository }} || true
 
     - name: Upload release
       uses: softprops/action-gh-release@v2
