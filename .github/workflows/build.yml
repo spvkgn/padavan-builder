@@ -13,9 +13,7 @@ jobs:
 
     - name: Get targets
       id: targets
-      run: |
-        cd targets
-        echo "matrix=$(ls | jq -cnR '[inputs | select(length>0)]')" >> $GITHUB_OUTPUT
+      run: echo "matrix=$(ls targets | jq -cnR '[inputs | select(length>0)]')" >> $GITHUB_OUTPUT
 
   build:
     name: 'build :: ${{ matrix.product_id }}'
@@ -136,10 +134,9 @@ jobs:
         # Delete existing release
         gh release delete latest --cleanup-tag -y -R ${{ github.repository }} || true
         # Get FW version
-        wget https://gitlab.com/hadzhioglu/padavan-ng/-/raw/master/trunk/versions.inc
-        VERS=$(awk -F= '/FIRMWARE_ROOTFS_VER/ { rootfs=$2 } /FIRMWARE_BUILDS_VER/ { print rootfs "-" $2 }' versions.inc)
+        VER=$(wget -qO- https://gitlab.com/hadzhioglu/padavan-ng/-/raw/master/trunk/versions.inc | awk -F= '/FIRMWARE_ROOTFS_VER/ { rootfs=$2 } /FIRMWARE_BUILDS_VER/ { print rootfs "-" $2 }')
         SHA_SHORT=$(wget -qO- https://gitlab.com/api/v4/projects/40277088/repository/commits | jq -r '.[0].short_id')
-        echo "FW_VERSION=3.4.$VERS-$SHA_SHORT" >> $GITHUB_ENV
+        echo "FW_VERSION=3.4.$VER-$SHA_SHORT" >> $GITHUB_ENV
 
     - name: Upload release
       uses: softprops/action-gh-release@v2
@@ -150,5 +147,4 @@ jobs:
         tag_name: latest
         name: ${{ env.FW_VERSION }}
         body_path: body.txt
-        files: |
-          *.zip
+        files: '*.zip'
